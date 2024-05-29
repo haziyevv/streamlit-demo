@@ -78,7 +78,8 @@ if prompt := st.chat_input():
             messages = message,
             temperature=0.0001,
             max_tokens=300,
-            frequency_penalty=0.0
+            frequency_penalty=0.0,
+            response_format={ "type": "json_object"}
         )   
         st.write("Response received!")
 
