@@ -76,12 +76,21 @@ if prompt := st.chat_input():
         response = client.chat.completions.create(
             model="gpt-4o",
             messages = message,
-            temperature=0.0001,
+            temperature=0.7,
             max_tokens=300,
             frequency_penalty=0.0,
-            response_format={ "type": "json_object"}
-        )   
+            response_format={ "type": "json_object" },
+            n=3
+        )
         st.write("Response received!")
-
-        response = json.loads(response.choices[0].message.content)
-        st.write(response)
+        
+        results = [json.loads(x.message.content) for x in response.choices]
+        codes = set([x["NAICS_code"] for x in results])
+        seen = set()
+        results_filtered = []
+        for result in results:
+            if result["NAICS_code"] in seen:
+                continue
+            results_filtered.append(result)
+            seen.add(result["NAICS_code"])
+        st.write(results_filtered)
