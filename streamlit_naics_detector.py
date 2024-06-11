@@ -15,6 +15,9 @@ import pickle
 from dotenv import load_dotenv
 import os
 
+with open("naics_17to22.pkl", "rb") as fr:
+    naics_17to22 = pickle.load(fr)
+
 load_dotenv()
 
 # Retrieve the API key from environment variables
@@ -89,7 +92,10 @@ if prompt := st.chat_input():
         seen = set()
         results_filtered = []
         for result in results:
-            if result["NAICS_code"] in seen:
+            naics_code = result["NAICS_code"]
+            if naics_code in naics_17to22:
+                naics_code = naics_17to22[naics_code]
+            if naics_code in seen:
                 continue
             results_filtered.append(result)
             seen.add(result["NAICS_code"])
