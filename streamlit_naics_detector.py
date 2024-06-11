@@ -99,6 +99,7 @@ if prompt := st.chat_input():
             naics_code = result["NAICS_code"]
 
             if naics_code in naics_17to22:
+                print(naics_code)
                 naics_code = naics_17to22[naics_code]
             if naics_code in seen:
                 continue
