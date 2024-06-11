@@ -18,6 +18,9 @@ import os
 with open("naics_17to22.pkl", "rb") as fr:
     naics_17to22 = pickle.load(fr)
 
+with open("naics_22.pkl", "rb") as fr:
+    naics_desc = pickle.load(fr)
+
 load_dotenv()
 
 # Retrieve the API key from environment variables
@@ -91,12 +94,16 @@ if prompt := st.chat_input():
         codes = set([x["NAICS_code"] for x in results])
         seen = set()
         results_filtered = []
+
         for result in results:
             naics_code = result["NAICS_code"]
+
             if naics_code in naics_17to22:
                 naics_code = naics_17to22[naics_code]
             if naics_code in seen:
                 continue
+            description = naics_desc.get(naics_code, result["description"])
+            result = {"NAICS_code": naics_code, "description": description}
             results_filtered.append(result)
-            seen.add(result["NAICS_code"])
+            seen.add(naics_code)
         st.write(results_filtered)
