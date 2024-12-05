@@ -1,8 +1,8 @@
 import os
-import re
 import json
 import requests
 import pickle
+from typing import Dict, List
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -12,77 +12,132 @@ from search_api import SearchSerper
 from config import OPENAI_API_URL, OPENAI_API_KEY
 from prompts import gpt_assistant_prompt, gpt_user_prompt
 
-with open("naics_17to22.pkl", "rb") as fr:
-    naics_17to22 = pickle.load(fr)
+# Load NAICS code mappings and descriptions
+def load_naics_data() -> tuple[Dict, Dict]:
+    """
+    Load NAICS code mappings and descriptions from pickle files.
+    
+    Returns:
+        tuple: (naics_17to22 mapping dict, naics descriptions dict)
+    """
+    with open("naics_17to22.pkl", "rb") as fr:
+        naics_17to22 = pickle.load(fr)
+    with open("naics_22.pkl", "rb") as fr:
+        naics_desc = pickle.load(fr)
+    return naics_17to22, naics_desc
 
-with open("naics_22.pkl", "rb") as fr:
-    naics_desc = pickle.load(fr)
+def process_gpt_results(results: List[Dict], 
+                       naics_17to22: Dict, 
+                       naics_desc: Dict) -> List[Dict]:
+    """
+    Process GPT results to get filtered and updated NAICS codes.
 
-load_dotenv()
+    Args:
+        results: List of raw results from GPT
+        naics_17to22: Mapping of old to new NAICS codes
+        naics_desc: Dictionary of NAICS code descriptions
 
-search_api = SearchSerper()
+    Returns:
+        List of filtered results with updated codes and descriptions
+    """
+    seen = set()
+    results_filtered = []
 
-st_callback = StreamlitCallbackHandler(st.container())
+    for result in results:
+        naics_code = result["NAICS_code"]
+        
+        # Update to new NAICS code if available
+        if naics_code in naics_17to22:
+            naics_code = naics_17to22[naics_code]
+        
+        # Skip duplicates
+        if naics_code in seen:
+            continue
+            
+        description = naics_desc.get(naics_code, result["description"])
+        results_filtered.append({
+            "NAICS_code": naics_code, 
+            "description": description
+        })
+        seen.add(naics_code)
+    
+    return results_filtered
 
-if prompt := st.chat_input():
-    st.chat_message("user").write(prompt)
-    with st.chat_message("assistant"):
-        with st.spinner("Searching..."):
-            try:
-                results = search_api.search(prompt)
-                context = " ".join(x["body"] for x in results)
-                st.write("Search completed!")
-            except Exception as e:
-                st.error(f"Error: {e}")
-                context = ""
-                results = []
-        if context:
-            st.write("Top search results:")
-            for result in results:
-                st.write(f"Title: {result['title']}")
-                st.write(f"Body: {result['body'][:200]}...")  # Displaying a snippet of the body
-        else:
-            st.write("No search results found. Will use knowledge of the LLM.")
-        message=[{"role": "assistant", "content": gpt_assistant_prompt}, {"role": "user", "content": gpt_user_prompt.format(prompt) + " context: " + context}]
+def main():
+    """Main Streamlit application function"""
+    # Initialize
+    load_dotenv()
+    naics_17to22, naics_desc = load_naics_data()
+    search_api = SearchSerper()
+    st_callback = StreamlitCallbackHandler(st.container())
 
-        st.write("Assistant is thinking...")
+    # Handle user input
+    if prompt := st.chat_input():
+        st.chat_message("user").write(prompt)
+        
+        with st.chat_message("assistant"):
+            # Search phase
+            with st.spinner("Searching..."):
+                try:
+                    results = search_api.search(prompt)
+                    context = " ".join(x["body"] for x in results)
+                    st.write("Search completed!")
+                    
+                    if context:
+                        st.write("Top search results:")
+                        for result in results:
+                            st.write(f"Title: {result['title']}")
+                            st.write(f"Body: {result['body'][:200]}...")
+                    else:
+                        st.write("No search results found. Will use knowledge of the LLM.")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    context = ""
+                    results = []
 
-        requst_data = {
-            'model': 'gpt-4o',
-            'messages': message,
-            'temperature': 0.001,
-            'max_tokens': 300,
-            'frequency_penalty': 0.0,
-            'n': 3,
-            'response_format': {"type": "json_object"},
-        }
+            # GPT processing phase
+            st.write("Assistant is thinking...")
+            
+            # Prepare GPT request
+            message = [
+                {"role": "assistant", "content": gpt_assistant_prompt},
+                {"role": "user", "content": gpt_user_prompt.format(prompt) + " context: " + context}
+            ]
+            
+            request_data = {
+                'model': 'gpt-4o',
+                'messages': message,
+                'temperature': 0.001,
+                'max_tokens': 300,
+                'frequency_penalty': 0.0,
+                'n': 3,
+                'response_format': {"type": "json_object"},
+            }
 
-        response = requests.post(
-            OPENAI_API_URL,
-            headers={'Authorization': f'Bearer {OPENAI_API_KEY}'},
-            json=requst_data
-        )
+            # Make GPT API request
+            response = requests.post(
+                OPENAI_API_URL,
+                headers={'Authorization': f'Bearer {OPENAI_API_KEY}'},
+                json=request_data
+            )
 
-        st.write("Response received!")
-        if response.status_code == 401:
-            st.error("Invalid OpenAI API key")
-        else:
-            result = response.json()
-            results = [json.loads(x['message']['content']) for x in result['choices']]
-            codes = set([x["NAICS_code"] for x in results])
-            seen = set()
-            results_filtered = []
+            st.write("Response received!")
+            
+            # Handle API response
+            if response.status_code == 401:
+                st.error("Invalid OpenAI API key")
+            else:
+                result = response.json()
+                gpt_results = [json.loads(x['message']['content']) 
+                             for x in result['choices']]
+                
+                # Process and display results
+                filtered_results = process_gpt_results(
+                    gpt_results, 
+                    naics_17to22, 
+                    naics_desc
+                )
+                st.write(filtered_results)
 
-            for result in results:
-                naics_code = result["NAICS_code"]
-
-                if naics_code in naics_17to22:
-                    print(naics_code)
-                    naics_code = naics_17to22[naics_code]
-                if naics_code in seen:
-                    continue
-                description = naics_desc.get(naics_code, result["description"])
-                result = {"NAICS_code": naics_code, "description": description}
-                results_filtered.append(result)
-                seen.add(naics_code)
-            st.write(results_filtered)
+if __name__ == "__main__":
+    main()
