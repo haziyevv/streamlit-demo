@@ -10,7 +10,7 @@ from langchain.callbacks import StreamlitCallbackHandler
 
 from search_api import SearchSerper
 from config import OPENAI_API_URL, OPENAI_API_KEY
-from prompts import gpt_assistant_prompt, gpt_user_prompt
+from prompts import gpt_assistant_prompt, gpt_user_prompt, gpt_system_prompt
 
 # Load NAICS code mappings and descriptions
 def load_naics_data() -> tuple[Dict, Dict]:
@@ -63,6 +63,62 @@ def process_gpt_results(results: List[Dict],
     
     return results_filtered
 
+
+def call_search_api(search_api: SearchSerper, search_query: str) -> str:
+    """
+    Call the search API and display the results in Streamlit.
+    """
+    try:
+        results = search_api.search(search_query)
+        context = " ".join(x["body"] for x in results)
+        st.write("Search completed!")
+                
+        if context:
+            st.write("Top search results:")
+            for result in results:
+                st.write(f"Title: {result['title']}")
+                st.write(f"Body: {result['body'][:200]}...")
+        else:
+            st.write("No search results found. Will use knowledge of the LLM.")
+    except Exception as e:
+        st.error(f"Error: {e}")
+        context = ""
+        results = []
+    return context
+
+def call_gpt(prompt: str, context: str = None):
+    """
+    Call the GPT API and display the results in Streamlit.
+    """
+    if not context:
+        message = [
+            {"role": "system", "content": gpt_system_prompt},
+            {"role": "user", "content": gpt_user_prompt.format(prompt)}
+        ]
+    else:
+        message = [
+            {"role": "system", "content": gpt_system_prompt},
+            {"role": "user", "content": gpt_user_prompt.format(prompt) + f"\nContext: {context}"}
+        ]
+    
+    request_data = {
+        'model': 'gpt-4o',
+        'messages': message,
+        'temperature': 0.001,
+        'max_tokens': 300,
+        'frequency_penalty': 0.0,
+        'n': 3,
+        'response_format': {"type": "json_object"},
+    }
+
+    # Make GPT API request
+    response = requests.post(
+        OPENAI_API_URL,
+        headers={'Authorization': f'Bearer {OPENAI_API_KEY}'},
+        json=request_data
+    )
+    return response
+
 def main():
     """Main Streamlit application function"""
     # Initialize
@@ -76,68 +132,49 @@ def main():
         st.chat_message("user").write(prompt)
         
         with st.chat_message("assistant"):
-            # Search phase
-            with st.spinner("Searching..."):
-                try:
-                    results = search_api.search(prompt)
-                    context = " ".join(x["body"] for x in results)
-                    st.write("Search completed!")
-                    
-                    if context:
-                        st.write("Top search results:")
-                        for result in results:
-                            st.write(f"Title: {result['title']}")
-                            st.write(f"Body: {result['body'][:200]}...")
-                    else:
-                        st.write("No search results found. Will use knowledge of the LLM.")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                    context = ""
-                    results = []
+            # # Search phase
+            # with st.spinner("Searching..."):
+           
 
             # GPT processing phase
             st.write("Assistant is thinking...")
             
-            # Prepare GPT request
-            message = [
-                {"role": "assistant", "content": gpt_assistant_prompt},
-                {"role": "user", "content": gpt_user_prompt.format(prompt) + " context: " + context}
-            ]
-            
-            request_data = {
-                'model': 'gpt-4o',
-                'messages': message,
-                'temperature': 0.001,
-                'max_tokens': 300,
-                'frequency_penalty': 0.0,
-                'n': 3,
-                'response_format': {"type": "json_object"},
-            }
-
-            # Make GPT API request
-            response = requests.post(
-                OPENAI_API_URL,
-                headers={'Authorization': f'Bearer {OPENAI_API_KEY}'},
-                json=request_data
-            )
-
+            response = call_gpt(prompt)
             st.write("Response received!")
-            
             # Handle API response
             if response.status_code == 401:
                 st.error("Invalid OpenAI API key")
             else:
                 result = response.json()
-                gpt_results = [json.loads(x['message']['content']) 
-                             for x in result['choices']]
-                
-                # Process and display results
-                filtered_results = process_gpt_results(
-                    gpt_results, 
-                    naics_17to22, 
-                    naics_desc
-                )
-                st.write(filtered_results)
+                if 'search_api' in result['choices'][0]['message']['content']:
+                    search_query = json.loads(result['choices'][0]['message']['content'])['search_api']
+                    context = call_search_api(search_api, search_query)
+                    response = call_gpt(prompt, context)
+                    if response.status_code == 401:
+                        st.error("Invalid OpenAI API key")
+                    else:
+                        result = response.json()
+                        gpt_results = [json.loads(x['message']['content']) 
+                                for x in result['choices']]
+                    
+                        # Process and display results
+                        filtered_results = process_gpt_results(
+                            gpt_results, 
+                            naics_17to22, 
+                            naics_desc
+                        )
+                        st.write(filtered_results)
+                else:
+                    gpt_results = [json.loads(x['message']['content']) 
+                                for x in result['choices']]
+                    
+                    # Process and display results
+                    filtered_results = process_gpt_results(
+                        gpt_results, 
+                        naics_17to22, 
+                        naics_desc
+                    )
+                    st.write(filtered_results)
 
 if __name__ == "__main__":
     main()
