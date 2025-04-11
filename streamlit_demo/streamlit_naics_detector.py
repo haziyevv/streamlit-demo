@@ -10,7 +10,7 @@ from langchain.callbacks import StreamlitCallbackHandler
 
 from search_api import SearchSerper
 from config import OPENAI_API_URL, OPENAI_API_KEY
-from prompts import gpt_assistant_prompt, gpt_user_prompt, gpt_system_prompt
+from prompts import gpt_user_prompt, gpt_system_prompt
 
 # Load NAICS code mappings and descriptions
 def load_naics_data() -> tuple[Dict, Dict]:
@@ -44,22 +44,23 @@ def process_gpt_results(results: List[Dict],
     results_filtered = []
 
     for result in results:
-        naics_code = result["NAICS_code"]
-        
-        # Update to new NAICS code if available
-        if naics_code in naics_17to22:
-            naics_code = naics_17to22[naics_code]
-        
-        # Skip duplicates
-        if naics_code in seen:
-            continue
+        if "NAICS_code" in result:
+            naics_code = result["NAICS_code"]
             
-        description = naics_desc.get(naics_code, result["description"])
-        results_filtered.append({
-            "NAICS_code": naics_code, 
-            "description": description
-        })
-        seen.add(naics_code)
+            # Update to new NAICS code if available
+            if naics_code in naics_17to22:
+                naics_code = naics_17to22[naics_code]
+            
+            # Skip duplicates
+            if naics_code in seen:
+                continue
+                
+            description = naics_desc.get(naics_code, result["description"])
+            results_filtered.append({
+                "NAICS_code": naics_code, 
+                "description": description
+            })
+            seen.add(naics_code)
     
     return results_filtered
 
@@ -110,7 +111,6 @@ def call_gpt(prompt: str, context: str = None):
         'n': 3,
         'response_format': {"type": "json_object"},
     }
-
     # Make GPT API request
     response = requests.post(
         OPENAI_API_URL,
@@ -134,8 +134,6 @@ def main():
         with st.chat_message("assistant"):
             # # Search phase
             # with st.spinner("Searching..."):
-           
-
             # GPT processing phase
             st.write("Assistant is thinking...")
             
